@@ -38,7 +38,7 @@ jobs:
             xfce4 xfce4-goodies dbus-x11 xterm \
             wine winetricks \
             mesa-utils libgl1-mesa-dri \
-            megatools curl
+            megatools curl ssl-cert
           KASM_DEB=/tmp/kasmvnc.deb
           curl -fsSL -o "$KASM_DEB" \
             https://github.com/kasmtech/KasmVNC/releases/download/v1.4.0/kasmvncserver_noble_1.4.0_amd64.deb
@@ -46,6 +46,8 @@ jobs:
 
       - name: Configure KasmVNC
         run: |
+          sudo make-ssl-cert generate-default-snakeoil --force-overwrite
+          touch "$HOME/.Xauthority"
           mkdir -p "$HOME/.vnc"
           PWTOOL=$(command -v vncpasswd || command -v kasmvncpasswd)
           printf '%s\n%s\n' "$VNC_PASSWORD" "$VNC_PASSWORD" | "$PWTOOL" -u runner -w -r
@@ -65,8 +67,9 @@ jobs:
         run: |
           VNCTOOL=$(command -v vncserver || command -v kasmvncserver)
           "$VNCTOOL" :1 -geometry "$RESOLUTION" -depth 24 -select-de xfce
-          sleep 5
-          ss -tlnp | grep -q ':6080' && echo "kasmvnc up on 6080" || echo "warning: 6080 not listening yet"
+          sleep 8
+          echo "listening sockets:"
+          ss -tlnp || true
 
       - name: Connect Tailscale
         uses: tailscale/github-action@v4
@@ -77,8 +80,11 @@ jobs:
       - name: Connection info
         run: |
           IP=$(tailscale ip -4 | head -n1)
+          PORT=$(ss -tlnH | grep -oE ':(6080|8443|443)[[:space:]]' | grep -oE '[0-9]+' | head -n1)
+          [ -z "$PORT" ] && PORT=6080
+          if [ "$PORT" = "6080" ]; then SCHEME=http; else SCHEME=https; fi
           echo "=== CONNECTION INFO ==="
-          echo "noVNC: http://${IP}:6080/"
+          echo "noVNC: ${SCHEME}://${IP}:${PORT}/"
 
       - name: Keep alive
         run: |
