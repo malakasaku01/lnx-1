@@ -1,0 +1,92 @@
+name: linux-gaming-vnc
+
+on:
+  workflow_dispatch:
+    inputs:
+      session_minutes:
+        description: "keep-alive minutes (max 345)"
+        required: false
+        default: "340"
+      resolution:
+        description: "desktop resolution"
+        required: false
+        default: "1280x800"
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      VNC_PASSWORD: ${{ secrets.VNC_PASSWORD }}
+      RESOLUTION: ${{ inputs.resolution }}
+      SESSION_MINUTES: ${{ inputs.session_minutes }}
+    steps:
+      - name: Validate secrets
+        run: |
+          if [ -z "$VNC_PASSWORD" ]; then echo "VNC_PASSWORD secret empty"; exit 1; fi
+          if [ -z "${{ secrets.TAILSCALE_AUTHKEY }}" ]; then echo "TAILSCALE_AUTHKEY secret empty"; exit 1; fi
+
+      - name: Install desktop + wine + kasmvnc
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            xfce4 xfce4-goodies dbus-x11 xterm \
+            wine winetricks \
+            mesa-utils libgl1-mesa-dri \
+            megatools curl
+          KASM_DEB=/tmp/kasmvnc.deb
+          curl -fsSL -o "$KASM_DEB" \
+            https://github.com/kasmtech/KasmVNC/releases/download/v1.4.0/kasmvncserver_noble_1.4.0_amd64.deb
+          sudo apt-get install -y -qq "$KASM_DEB"
+
+      - name: Configure KasmVNC
+        run: |
+          mkdir -p "$HOME/.vnc"
+          PWTOOL=$(command -v vncpasswd || command -v kasmvncpasswd)
+          printf '%s\n%s\n' "$VNC_PASSWORD" "$VNC_PASSWORD" | "$PWTOOL" -u runner -w -r
+          cat > "$HOME/.vnc/kasmvnc.yaml" <<'EOF'
+          network:
+            protocol: http
+            websocket_port: 6080
+            ssl:
+              require_ssl: false
+          EOF
+          {
+            echo 'export LIBGL_ALWAYS_SOFTWARE=1'
+            echo 'export GALLIUM_DRIVER=llvmpipe'
+          } >> "$HOME/.bashrc"
+
+      - name: Start desktop
+        run: |
+          VNCTOOL=$(command -v vncserver || command -v kasmvncserver)
+          "$VNCTOOL" :1 -geometry "$RESOLUTION" -depth 24 -select-de xfce
+          sleep 5
+          ss -tlnp | grep -q ':6080' && echo "kasmvnc up on 6080" || echo "warning: 6080 not listening yet"
+
+      - name: Connect Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: gh-linux-game
+
+      - name: Connection info
+        run: |
+          IP=$(tailscale ip -4 | head -n1)
+          echo "=== CONNECTION INFO ==="
+          echo "noVNC: http://${IP}:6080/"
+
+      - name: Keep alive
+        run: |
+          M="$SESSION_MINUTES"
+          case "$M" in ''|*[!0-9]*) M=340;; esac
+          if [ "$M" -gt 345 ]; then M=345; fi
+          i=0
+          while [ "$i" -lt "$M" ]; do
+            sleep 60
+            i=$((i + 1))
+          done
