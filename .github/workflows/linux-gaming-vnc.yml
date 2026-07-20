@@ -47,6 +47,9 @@ jobs:
       - name: Configure KasmVNC
         run: |
           sudo make-ssl-cert generate-default-snakeoil --force-overwrite
+          sudo chmod 755 /etc/ssl/private
+          sudo chmod 644 /etc/ssl/private/ssl-cert-snakeoil.key
+          ls -l /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem
           touch "$HOME/.Xauthority"
           mkdir -p "$HOME/.vnc"
           PWTOOL=$(command -v vncpasswd || command -v kasmvncpasswd)
